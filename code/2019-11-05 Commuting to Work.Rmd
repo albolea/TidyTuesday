@@ -1,0 +1,46 @@
+---
+title: "2019-11-05 Commuting to Work"
+date: "11/5/2019"
+author: "Renato Albolea"
+output: html_notebook
+---
+
+# Including Libraries
+```{r}
+library(tidyverse)
+library(here)
+library(readxl)
+
+```
+
+# function to download files if necessary
+```{r}
+check_and_download_file <- function(file, git_path) {
+    if(!file.exists(here("data",file))){
+      res <- tryCatch(download.file(paste0(git_path,file),
+                              destfile=here("data",file),
+                              method="auto",
+                              mode = "wb"),
+                error=function(e) 1)
+    }
+}
+
+
+```
+
+# Loading the data sets: 
+
+## Supplemental Tables
+```{r}
+git_path <- "https://raw.githubusercontent.com/rfordatascience/tidytuesday/master/data/2019/2019-11-05/"
+
+file = "supplemental-table1.xlsx"
+check_and_download_file(file,git_path)
+# The data is coded as .xlsx
+# the 5 first rows will not be used 
+
+# Small city: Total City Population of 20,000–99,999
+# data: Percentage of Workers Who Commuted by Bicycle in Small Cities: 2008–2012
+small_bike <- read_excel(here("data",file), skip = 5)
+```
+

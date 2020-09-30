@@ -1,0 +1,51 @@
+---
+title: "NYC Squirrel Census"
+output: html_notebook
+---
+
+This is my implementation of the Tidy Tuesday from October 29th 2019.
+The challange of this week is regarding the [NYC Squirrel Census](https://github.com/rfordatascience/tidytuesday/tree/master/data/2019/2019-10-29).
+Special thanks for [Sara Stoudt](https://twitter.com/sastoudt) for sharing this data, and [Mine Cetinkaya-Rundel](https://twitter.com/minebocek) for her [squirrel data package](https://github.com/mine-cetinkaya-rundel/nycsquirrels18) using the same data.
+
+CityLab's [Linda Poon](https://twitter.com/linpoonsays) wrote an [article](https://www.citylab.com/life/2019/06/squirrel-census-results-population-central-park-nyc/592162/) using this data. 
+
+
+Without further ado, let's *code!!*. 
+
+This are the libraries that I used in this chalange.
+```{r, message=FALSE}
+library(tidyverse)
+library(magrittr) # to Use %<>% which is the short version of df <- df %>%
+
+```
+
+Downloading the data:
+```{r, message=FALSE}
+nyc_squirrels <- readr::read_csv("https://raw.githubusercontent.com/rfordatascience/tidytuesday/master/data/2019/2019-10-29/nyc_squirrels.csv")
+```
+
+Looking the data:
+```{r}
+str(nyc_squirrels)
+```
+It seems that most of the data will better represented by factors:
+```{r}
+nyc_squirrels %<>% mutate_if(is.character,as.factor,
+                             is.logical,as.factor) %>%
+                  mutate(zip_codes = as.factor(zip_codes))
+
+nyc_squirrels %>% summary()
+```
+Some calculation to use in the text:
+```{r}
+num_obs <- nrow(nyc_squirrels)
+num_var <-  ncol(nyc_squirrels)
+perc_eating <- round(sum(nyc_squirrels$eating)/num_obs *100,1)
+perc_looking_food <- nyc_squirrels %>% filter(eating==FALSE,foraging==TRUE) %>% summarise(perc=n()/num_obs) %>% as.numeric()
+perc_looking_food <- round(perc_looking_food*100,1)
+
+```
+
+In the dataset we have `r format(num_obs,big.mark=",",scientific=FALSE)` obervations and `r num_var` variables.
+
+In 
