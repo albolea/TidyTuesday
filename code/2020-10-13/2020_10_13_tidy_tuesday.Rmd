@@ -1,0 +1,283 @@
+---
+title: "TidyTemplate"
+date: 2020-10-13
+output:
+  html_document: 
+    toc: yes
+    toc_float: true
+    toc_collapsed: true
+    toc_depth: 3
+    number_sections: true
+    keep_md: yes
+    code_download: yes
+editor_options:
+  chunk_output_type: console
+---
+
+# TidyTuesday
+
+Join the R4DS Online Learning Community in the weekly #TidyTuesday event!
+Every week we post a raw dataset, a chart or article related to that data set, and ask you to explore the data.
+While the data-set will be “tamed”, it will not always be tidy! As such you might need to apply various R for Data Science techniques to wrangle the data into a true tidy format.
+The goal of Tidy Tuesday is to apply your R skills, get feedback, explore other’s work, and connect with the greater #RStats community!
+As such we encourage everyone of all skills to participate!
+
+```{r setup, include=FALSE}
+
+knitr::opts_chunk$set(echo = TRUE, warning = FALSE, message = FALSE)
+
+library(tidyverse)
+library(tidytuesdayR)
+library(tidymodels)
+library(gganimate)
+
+```
+
+```{r echo=FALSE}
+theme_roboto <- function(base_size = 11,
+                         strip_text_size = 12,
+                         strip_text_margin = 5,
+                         subtitle_size = 13,
+                         subtitle_margin = 10,
+                         plot_title_size = 16,
+                         plot_title_margin = 10,
+                         ...) {
+    ret <- ggplot2::theme_minimal(base_family = "RobotoCondensed-Regular",
+                                  base_size = base_size, ...)
+    ret$strip.text <- ggplot2::element_text(
+        hjust = 0, size = strip_text_size,
+        margin = ggplot2::margin(b = strip_text_margin),
+        family = "Roboto-Bold"
+    )
+    ret$plot.subtitle <- ggplot2::element_text(
+        hjust = 0, size = subtitle_size,
+        margin = ggplot2::margin(b = subtitle_margin),
+        family = "RobotoCondensed-Regular"
+    )
+    ret$plot.title <- ggplot2::element_text(
+        hjust = 0, size = plot_title_size,
+        margin = ggplot2::margin(b = plot_title_margin),
+        family = "Roboto-Bold"
+    )
+    ret
+}
+#from: https://github.com/juliasilge/silgelib/blob/master/R/graphing.R
+```
+
+
+
+# Load the weekly Data
+
+Download the weekly data and make available in the `tt` object.
+
+```{r Load}
+
+#tt <- tt_load("2020-10-13") # Limited Exceeded
+datasaurus <- readr::read_csv('https://raw.githubusercontent.com/rfordatascience/tidytuesday/master/data/2020/2020-10-13/datasaurus.csv')
+
+```
+
+
+# Readme
+
+Take a look at the readme for the weekly data to get insight on the data-set.
+This includes a data dictionary, source, and a link to an article on the data.
+
+```{r Readme, eval = interactive()}
+
+# tt
+datasaurus
+```
+
+
+# Glimpse Data
+
+Take an initial look at the format of the data available.
+
+```{r Glimpse}
+
+# tt %>% 
+#   map(glimpse)
+
+datasaurus %>% glimpse()
+
+```
+
+# Wrangle
+
+Explore the data and process it into a nice format for plotting! Access each data-set by name by using a dollarsign after the `tt` object and then the name of the data set.
+
+```{r Wrangle}
+
+#datasaurus <- tt$datasaurus
+datasaurus <- datasaurus %>% mutate(dataset = factor(dataset))
+
+datasaurus %>% 
+  group_by(dataset) %>% 
+  summarise(across(c(x,y), 
+                   list(mean = mean,
+                        sd = sd)),
+            x_y_cor = cor(x,y),
+            count = n())%>% 
+  kableExtra::kable(caption = "Similarities for X and Y in each dataset") %>% 
+  kableExtra::kable_styling(bootstrap_options = "striped")
+
+datasaurus %>% 
+  group_by(dataset) %>% 
+  summarise(across(c(x,y), 
+                   list(min = min,
+                        max = max)
+                   ))%>% 
+  kableExtra::kable(caption = "Differences for X and Y in each dataset") %>% 
+  kableExtra::kable_styling(bootstrap_options = "striped")
+
+```
+
+
+# Visualize
+
+Using your processed dataset, create your unique visualization.
+
+```{r Visualize_Animate}
+
+datasaurus %>% 
+  ggplot(aes(x=x, y=y)) +
+  geom_point(alpha=0.7) +
+  theme_light() +
+  theme_roboto()+
+  ggtitle('Now showing {closest_state}') +
+  transition_states(dataset,
+                    transition_length = 2,
+                    state_length = 3)
+
+
+  
+```
+
+
+```{r Visualize_Static}
+
+datasaurus %>% 
+  ggplot(aes(x=x, y=y, color=dataset)) +
+  geom_point(alpha=0.7) +
+  theme_light() +
+  facet_wrap(~dataset)+
+  theme_roboto()
+  
+```
+
+# Save Image
+
+Save your image for sharing. Be sure to use the `#TidyTuesday` hashtag in your post on twitter! 
+
+```{r Saving_Image}
+
+# This will save your most recent plot
+ggsave(
+  filename = "DatasauRus.png",
+  device = "png")
+
+```
+
+
+# Can we predict which dataset a point belongs too?
++ The size of the datasate will make harder to get a good result.
+
+## Build a model
+```{r Build_Model}
+set.seed(332)
+# Using K-Folds
+dino_folds <- datasaurus %>% 
+  bootstraps()
+
+rf_spec <- rand_forest(trees = 1000) %>% 
+  set_mode("classification") %>% 
+  set_engine("ranger")
+
+dino_wf <- workflow() %>% 
+  add_model(rf_spec) %>% 
+  add_formula(dataset ~ x+y)
+
+doParallel::registerDoParallel()
+
+dino_rs <- fit_resamples(
+  dino_wf,
+  resamples = dino_folds,
+  control = control_resamples(save_pred = TRUE)
+)
+```
+
+
+## Evaluate model
+
+```{r Metrics}
+collect_metrics(dino_rs)  %>%
+kableExtra::kable(caption = "How good is the model?") %>%
+kableExtra::kable_styling(bootstrap_options = "striped")
+```
+
+```{r Names}
+dino_pred <- dino_rs %>% 
+  collect_predictions()
+
+dino_pred %>% names()
+```
+
+
+```{r PPV_Metrics}
+dino_pred %>%
+  group_by(id) %>%
+  ppv(dataset, .pred_class) #Prediction Positive Values
+```
+
+### ROC Curves
+```{r ROC, fig.height = 11, fig.width = 11}
+dino_pred %>%
+  group_by(id) %>%
+  roc_curve(dataset, .pred_away:.pred_x_shape) %>%
+  ggplot(aes(1-specificity, sensitivity, color=id)) +
+  geom_abline(lty=2, color="gray80", size=1.5) +
+  geom_path(show.legend = FALSE, alpha=0.7, size=1) +
+  facet_wrap(~.level, ncol=4) +
+  coord_equal() +
+  theme_roboto()
+```
+
++ The model's predictive power varies with the datasets.
++ The model is good to predict the datasets: dots, h_lines, and v_lines.
++ The model is almost guessing for the datasets dino and away.
+
+
+### Confusion matrix
+
+```{r Conf_Matrix, fig.height = 6, fig.width = 11}
+dino_pred %>% 
+  conf_mat(dataset, .pred_class) %>% 
+  autoplot(type="heatmap")+
+  theme_roboto()+
+  scale_fill_gradient2(low = "grey80",
+                      mid = "grey80",
+                      high = "orange",
+                      midpoint = 0,
+                      space = "Lab",
+                      na.value = "grey80",
+                      guide = FALSE,
+                      aesthetics = "fill")
+```
+
++ Excluding the right cases
+```{r Conf_Matrix_False, fig.height = 6, fig.width = 11}
+dino_pred %>% 
+  filter(.pred_class != dataset) %>% 
+  conf_mat(dataset, .pred_class) %>% 
+  autoplot(type="heatmap")+
+  theme_roboto()+
+  scale_fill_gradient2(low = "grey80",
+                        mid = "grey80",
+                        high = "orange",
+                        midpoint = 0,
+                        space = "Lab",
+                        na.value = "grey80",
+                        guide = FALSE,
+                        aesthetics = "fill")
+```
