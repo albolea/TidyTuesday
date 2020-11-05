@@ -1,0 +1,459 @@
+---
+title: "TidyTemplate"
+date: 2020-11-03
+output:
+  html_document: 
+    code_download: yes
+    fig_height: 9
+    fig_width: 12
+    keep_md: yes
+    number_sections: yes
+    toc: yes
+    toc_collapsed: yes
+    toc_float: yes
+editor_options:
+  chunk_output_type: console
+---
+
+# TidyTuesday
+
+Join the R4DS Online Learning Community in the weekly #TidyTuesday event!
+Every week we post a raw dataset, a chart or article related to that dataset, and ask you to explore the data.
+While the dataset will be “tamed”, it will not always be tidy! As such you might need to apply various R for Data Science techniques to wrangle the data into a true tidy format.
+The goal of TidyTuesday is to apply your R skills, get feedback, explore other’s work, and connect with the greater #RStats community!
+As such we encourage everyone of all skills to participate!
+
+```{r setup, include=FALSE}
+
+knitr::opts_chunk$set(echo = TRUE)
+
+library(tidytuesdayR)
+library(tidyverse)
+library(scales)
+library(skimr)
+library(magrittr)
+library(forcats)
+library(glue)
+library(ggridges)
+```
+
+```{r echo=FALSE}
+theme_roboto <- function(base_size = 11,
+                         strip_text_size = 12,
+                         strip_text_margin = 5,
+                         subtitle_size = 13,
+                         subtitle_margin = 10,
+                         plot_title_size = 16,
+                         plot_title_margin = 10,
+                         ...) {
+  ret <- theme_minimal(base_family = "RobotoCondensed-Regular",
+                       base_size = base_size, 
+                       ...)
+  
+  ret$strip.text <- element_text(hjust = 0, 
+                                 size = strip_text_size,
+                                 margin = ggplot2::margin(b = strip_text_margin),
+                                 family = "Roboto-Bold",
+                                 color = "#003399")
+  
+  ret$plot.subtitle <- element_text(hjust = 0, 
+                                    size = subtitle_size,
+                                    margin = ggplot2::margin(b = subtitle_margin),
+                                    family = "RobotoCondensed-Regular",
+                                    color = "#003399")
+  
+  ret$plot.title <- element_text(hjust = 0, 
+                                 size = plot_title_size,
+                                 margin = ggplot2::margin(b = plot_title_margin),
+                                 family = "Roboto-Bold",
+                                 face = "bold",
+                                 color = "#003399")
+  
+  ret$plot.background = element_rect(fill = "#ffcc00")
+  
+  ret$axis.text = element_text(color = "#003399")
+  
+  ret$axis.title = element_text(color = "#003399",
+                                family = "Roboto-Bold",
+                                face = "bold")
+  ret$panel.grid.major = element_line(size = 0.3, 
+                                      linetype = 'solid', 
+                                      color = "white") 
+  
+  ret$panel.grid.minor = element_line(size = 0.2, 
+                                      linetype = 'solid', 
+                                      colour = "white")
+  
+  ret$plot.caption = element_text(hjust = 1, 
+                                  family = "RobotoCondensed-Regular", 
+                                  color = "#003399")
+  
+  ret
+}
+
+```
+# Load the weekly Data
+
+Dowload the weekly data and make available in the `tt` object.
+
+```{r Load, message=FALSE}
+
+tt <- tt_load("2020-11-03")
+
+# Caption text
+caption_text = expression(paste(italic("Data source: "), 
+                                bold("Ikea "), 
+                                italic("& "), 
+                                bold("Kaggle"), 
+                                italic(" | Graphic: "), 
+                                bold("Renato Albolea")))
+```
+
+
+# Readme
+
+Take a look at the readme for the weekly data to get insight on the dataset.
+This includes a data dictionary, source, and a link to an article on the data.
+
+```{r Readme, eval = interactive()}
+
+tt
+
+```
+
+
+# Glimpse Data
+
+Take an initial look at the format of the data available.
+
+```{r Glimpse}
+
+tt %>% 
+  map(glimpse)
+
+```
+
+# Wrangle
+
+Explore the data and process it into a nice format for plotting! Access each dataset by name by using a dollarsign after the `tt` object and then the name of the data set.
+
+```{r Wrangle}
+
+ikea <- tt$ikea %>% 
+  select(-X1)
+
+ikea %>% skim()
+
+ikea %<>% 
+  add_count(category, name="category_count") %>% 
+  mutate(old_price = parse_number(if_else(old_price=='No old price', 
+                                          as.character(price), 
+                                          str_remove(old_price, "SR "))),
+         promotion = old_price!=price,
+         discount = old_price - price,
+         discount_perc = discount/old_price,
+         category = str_trim(str_remove(category, 'furniture')) ,
+         category_num = glue("{category}(#{category_count})"),
+         name = fct_lump(name, 20),
+         short_description = str_trim(str_squish(short_description)),
+         volume = depth*width*height/10^6) 
+
+ikea %<>%separate(short_description,
+                  into = c("main_description", "rest"),
+                  sep = ", ",
+                  extra = "merge",
+                  fill = "right",
+                  remove = FALSE)
+
+ikea %<>% extract(col = rest,
+                  into = "description_size",
+                  regex = "([\\d\\-xX]+)",
+                  remove = FALSE)
+  
+```
+
++ No missing data
++ `r round(mean(ikea$sellable_online)*100,2)`% of the products are sellable online.
+
+
+# Visualize
+
+Using your processed dataset, create your unique visualization.
+
+```{r Visualize}
+ikea %>% 
+  count(category, sort = TRUE) %>% 
+  ggplot(aes(x=n,
+             y = fct_reorder(category, n))) +
+  geom_col(fill = "#003399") + 
+  theme_roboto()+
+  labs(title = "Ikea product distribution",
+       x = "Number of items",
+       y = element_blank(),
+       caption = caption_text)
+```
+
+
+```{r Discount}
+ikea %>% 
+  filter(promotion) %>% 
+  ggplot(aes(x=discount_perc,
+             y=fct_reorder(category, discount_perc, .fun='mean'))) + 
+  geom_boxplot() +
+  theme_roboto() +
+  labs(title = "Trolleys is the most discounted item",
+       x = "Discount Percentage",
+       y = element_blank(),
+       caption = caption_text) + 
+  scale_x_continuous(labels=percent)
+```
+
+```{r Discount_2}
+ikea %>% 
+  filter(promotion) %>% 
+  ggplot(aes(x=discount_perc,
+             y=fct_reorder(category_num, discount_perc, .fun='mean'))) + 
+  geom_density_ridges(fill = "#003399",
+                      alpha = 0.8) +
+  theme_roboto() +
+  labs(title = "Trolleys is the most discounted item",
+       x = "Discount Percentage",
+       y = element_blank(),
+       caption = caption_text) + 
+  scale_x_continuous(labels=percent)
+```
+
+```{r Price}
+ikea %>% 
+  ggplot(aes(x=price,
+             y=fct_reorder(category_num, price, .fun='mean'))) + 
+  geom_boxplot() +
+  theme_roboto() +
+  labs(title = "On average, Wardrobes is the most expensive item",
+       x = "Price in SR$",
+       y = element_blank(),
+       caption = caption_text) +
+  scale_x_log10(labels=dollar)
+
+```
+
+```{r Price_2}
+ikea %>% 
+  ggplot(aes(x=price,
+             y=fct_reorder(category_num, price, .fun='mean'))) + 
+  geom_density_ridges(fill = "#003399",
+                      alpha = 0.8) +
+  theme_roboto() +
+  labs(title = "On average, Wardrobes is the most expensive item",
+       x = "Price in SR$",
+       y = element_blank(),
+       caption = caption_text) +
+  scale_x_log10(labels=dollar)
+
+```
+
+# Does having option of color influence the price?
+
+```{r}
+ikea %>% 
+  filter(promotion) %>% 
+  ggplot(aes(x=discount_perc,
+             y=fct_reorder(category_num, discount_perc, .fun='mean'),
+             fill = other_colors)) + 
+  geom_boxplot() +
+  theme_roboto() +
+  labs(title = "Trolleys is the most discounted item",
+       x = "Discount Percentage",
+       y = element_blank(),
+       caption = caption_text) + 
+  scale_x_continuous(labels=percent)
+```
+
+```{r}
+ikea %>% 
+  filter(promotion) %>% 
+  ggplot(aes(x=discount_perc,
+             y=fct_reorder(category_num, discount_perc, .fun='mean'),
+             fill = other_colors)) + 
+  geom_density_ridges(alpha = 0.8) +
+  theme_roboto() +
+  labs(title = "Trolleys is the most discounted item",
+       x = "Discount Percentage",
+       y = element_blank(),
+       caption = caption_text) + 
+  scale_x_continuous(labels=percent)
+```
+
+```{r}
+ikea %>% 
+  ggplot(aes(x=price,
+             y=fct_reorder(category_num, price, .fun='mean'),
+             fill = other_colors)) + 
+  geom_boxplot() +
+  theme_roboto() +
+  labs(title = "On average, Wardrobes is the most expensive item",
+       x = "Price in SR$",
+       y = element_blank(),
+       caption = caption_text) +
+  scale_x_log10(labels=dollar)
+
+```
+
+```{r}
+ikea %>% 
+  ggplot(aes(x=price,
+             y=fct_reorder(category_num, price, .fun='mean'),
+             fill = other_colors)) + 
+  geom_density_ridges(alpha = 0.8) +
+  theme_roboto() +
+  labs(title = "On average, Wardrobes is the most expensive item",
+       x = "Price in SR$",
+       y = element_blank(),
+       caption = caption_text) +
+  scale_x_log10(labels=dollar)
+
+```
+
++ For some categories we can see price difference for having color options.
++ Bar and Trolley have a different behaviour. Only cheapper products offer color options.
+
+# How well organized is the products?
+
+```{r}
+ikea %>% 
+  count(name, category) %>% 
+  filter(name != "Other") %>% 
+  ggplot(aes(x=n,
+             y=fct_reorder(name, n, sum) ,
+             fill= fct_reorder(category, n, sum))) +
+  geom_col() +
+  theme_roboto() +
+  scale_fill_discrete(guide = guide_legend(reverse = TRUE),
+                      name = "Category") +
+  labs(title = "The client cannot look to the name to have simmilar design accros categories",
+       subtitle = "Few product names are used in the company",
+       x = "Number of items",
+       y = element_blank(),
+       caption = caption_text) 
+  
+```
+
+# Volume distribution
+
+```{r}
+ikea %>% 
+  filter(!is.na(volume),
+          volume > 0.01) %>% 
+  arrange(desc(volume)) %>% 
+  add_count(category, name = "category_count") %>% 
+  mutate(category_num = glue("{category}(#{category_count})"),
+         category_num = fct_reorder(category_num, volume, .fun='mean')) %>% 
+  ggplot(aes(volume, category_num)) +
+  geom_boxplot() +
+  scale_x_log10() +
+  theme_roboto() +
+    labs(title = "As expected, sofas and wardrobes are the bigest items",
+       subtitle = "",
+       x = "Volume in m^3",
+       y = element_blank(),
+       caption = caption_text) 
+```
+
+# Is there any relationship between price and volume?
+
+```{r}
+ikea %>% 
+  filter(!is.na(volume),
+          volume > 0.01) %>%
+  mutate(category = fct_lump(category, 8)) %>% 
+  add_count(category, name = "category_count") %>% 
+  mutate(category_num = glue("{category}(#{category_count})"),
+         category_num = fct_reorder(category_num, volume, .fun='mean'),
+         ) %>% 
+  ggplot(aes(price, volume)) + 
+  geom_point() +
+  geom_smooth(method="lm") +
+  facet_wrap(~category) +
+  theme_roboto() +
+    labs(title = "The graph shows some relationship, but not completly linear",
+       subtitle = "",
+       x = "Volume in m^3",
+       y = element_blank(),
+       caption = caption_text) 
+
+
+```
+
+
+```{r}
+ikea %>% 
+  filter(!is.na(volume),
+          volume > 0.01) %>%
+  mutate(category = fct_lump(category, 8)) %>% 
+  add_count(category, name = "category_count") %>% 
+  mutate(category_num = glue("{category}(#{category_count})"),
+         category_num = fct_reorder(category_num, volume, .fun='mean'),
+         ) %>% 
+  ggplot(aes(price, volume)) + 
+  geom_point() +
+  geom_smooth(method="lm") +
+  facet_wrap(~category) +
+  scale_x_log10() +
+  scale_y_log10() +
+  theme_roboto() +
+    labs(title = "The relationship seems strong after the log transformation",
+       subtitle = "",
+       x = "Volume in m^3",
+       y = element_blank(),
+       caption = caption_text) 
+
+
+```
+
+```{r}
+ikea %>% 
+  filter(!is.na(volume),
+          volume > 0.01) %>%
+  add_count(category, name = "category_count") %>% 
+  mutate(category_num = glue("{category}(#{category_count})")) %>%
+  group_by(category_num) %>% 
+  summarise(price_vol_cor = round(cor(price,volume), 3),
+            log_price_log_vol_cor = round(cor(log2(price), log2(volume)),3)) %>% 
+  arrange(-log_price_log_vol_cor) %>% 
+  kableExtra::kable(caption = "Corelation between price and volume") %>% 
+  kableExtra::kable_styling(bootstrap_options = "striped")
+  
+```
+
+
+# Main factors that influences the price
+
+```{r}
+library(broom)
+ikea %>% 
+  filter(!is.na(volume),
+          volume > 0.01) %>%
+  mutate(category = fct_lump(category, 16),
+         category_num = glue("{category}(#{category_count})"),
+         category_num = fct_relevel(category_num, "Tables & desks(#612)"))%>% 
+  add_count(category, name="category_count") %>% 
+  lm(log2(price) ~ log2(volume) + category_num + other_colors, data = .) %>% 
+  tidy(conf.int = TRUE) %>% 
+  filter(term != "(Intercept)") %>% 
+  mutate(term = ifelse(term == "log2(volume)", "Volume(doubling)", term),
+         term = str_remove_all(term, "category_num"),
+         term = fct_reorder(term, estimate)) %>% 
+  ggplot(aes(estimate, term)) +
+  geom_point() + 
+  geom_errorbarh(aes(xmin = conf.low, xmax=conf.high), height=0.15, color = "#003399") +
+  geom_vline(xintercept = 0, color = "#003399", lty=2 ) +
+  theme_roboto() +
+  xlim(-2,2)+
+  theme_roboto() +
+    labs(title = "Volume is a major contributor to price",
+       subtitle = "",
+       x = "Impact on price.\n Base Case: Tables & desk with no other color",
+       y = element_blank(),
+       caption = caption_text) 
+```
+
