@@ -1,0 +1,295 @@
+---
+title: "ML for Board Games"
+author: "Renato Albolea"
+date: "2/7/2022"
+slug: board-games
+output: html_document
+categories:
+  - rstats
+  - tidymodels
+tags:
+  - rstats
+  - tidymodels
+summary: "Use custom feature engineering for board game categories, tune an xgboost model with racing methods, and use explainability methods for deeper understanding."
+editor_options: 
+  chunk_output_type: console
+---
+
+```{r setup, include=FALSE}
+library(knitr)
+knitr::opts_chunk$set(echo = TRUE)
+
+library(tidyverse)
+theme_set(theme_minimal())
+
+library(gt)
+
+library(tidymodels)
+library(textrecipes)
+library(finetune)
+library(vip)
+library(SHAPforxgboost)
+update_geom_defaults("rect",
+                     list(fill = "midnightblue", alpha = 0.8))
+```
+
+Let's test a model for predicting rates of [board games]("https://github.com/rfordatascience/tidytuesday/blob/master/data/2022/2022-01-25/readme.md")
+
+
+## Loading the Data
+
+```{r}
+ratings <- readr::read_csv('https://raw.githubusercontent.com/rfordatascience/tidytuesday/master/data/2022/2022-01-25/ratings.csv')
+details <- readr::read_csv('https://raw.githubusercontent.com/rfordatascience/tidytuesday/master/data/2022/2022-01-25/details.csv')
+
+ratings %>% 
+  glimpse() 
+```
+
+```{r}
+ggplot(ratings, aes(average)) +
+  geom_histogram()+
+  labs(title = "Distribution of Average Reviews")
+```
+
+```{r}
+ratings %>% 
+  arrange(users_rated) %>% 
+  head(10) %>% 
+  gt() %>% 
+  tab_header(
+    title = md("**10 Games with lower number of Users Review**")
+  ) %>%
+  opt_align_table_header(align = "left")
+```
+
+
+```{r}
+ratings %>% 
+  arrange(users_rated) %>% 
+  tail(10) %>% 
+  gt() %>% 
+  tab_header(
+    title = md("**10 Games with highest number of Users Review**")
+  ) %>%
+  opt_align_table_header(align = "left")
+```
+
+```{r}
+ratings %>% 
+  arrange(rank) %>% 
+  head(10) %>% 
+  gt() %>% 
+  tab_header(
+    title = md("**Top 10 ranked games**")
+  ) %>%
+  opt_align_table_header(align = "left")
+```
+
+```{r}
+details %>% 
+  glimpse()
+```
+
+**Joining variables**
+```{r}
+ratings_details <- 
+  ratings %>% 
+  left_join(details, by="id")
+```
+
+### Exploring Minimal Age
+```{r}
+ratings_details %>% 
+  ggplot(aes(minage)) +
+  geom_histogram()
+
+```
+
+
+```{r}
+get_box_stats <- function(y, upper_limit = max(y) * 1.15) {
+  return(data.frame(
+    y = 0.95 * upper_limit,
+    label = paste(
+      "Count =", length(y), "\n",
+      "Mean =", round(mean(y), 2), "\n",
+      "Median =", round(median(y), 2), "\n"
+    )
+  ))
+}
+
+ratings_details %>% 
+  mutate(minage = cut_number(minage, 4)) %>% 
+  ggplot(aes(minage, average, fill=minage))+ 
+  geom_boxplot(alpha = 0.5, show.legend = FALSE)+
+  stat_summary(fun.data = get_box_stats, geom = "text", hjust = 0.5, vjust = 0.9)
+```
+
+- NAs can be excluded given its low frequency.
+ 
+ 
+
+### Exploring year
+```{r}
+ratings_details %>% 
+  filter(year > 1990, year< 2022) %>% 
+  ggplot(aes(year)) +
+  geom_histogram()
+```
+
+```{r}
+ratings_details %>% 
+  #filter(year > 1990, year< 2022) %>% 
+  mutate(yearpublished = cut_number(yearpublished, 5)) %>% 
+  ggplot(aes(yearpublished, average, fill=yearpublished))+ 
+  geom_boxplot(alpha = 0.5, show.legend = FALSE)+
+  stat_summary(fun.data = get_box_stats, geom = "text", hjust = 0.5, vjust = 0.9)
+```
+
+* Recent games have higher ratings
+
+## Spending our data budget
+```{r}
+set.seed(123)
+game_split <- ratings_details %>% 
+  select(name, average, yearpublished, matches("min|max"), boardgamecategory, boardgamemechanic) %>% 
+  na.omit() %>% 
+  initial_split(strata = average)
+game_train <- training(game_split)
+game_test <- testing(game_split)
+
+set.seed(234)
+game_folds <- game_train %>% 
+  vfold_cv(strata = average)
+game_folds
+
+```
+
+## Feature Engineering
+```{r}
+split_category <- function(x) {
+  x %>% 
+    str_split(", ") %>%
+    map(str_remove_all, "[:punct:]") %>% 
+    map(str_squish) %>% 
+    map(str_replace_all, " ", "_") %>%
+    map(str_to_lower)
+}
+
+
+game_rec <- recipe(average ~ ., data = game_train) %>% 
+  update_role(name, new_role = "id") %>% 
+  step_tokenize(boardgamecategory,custom_token = split_category) %>% 
+  step_tokenfilter(boardgamecategory, max_tokens = 30) %>% 
+  step_tf(boardgamecategory) %>% 
+  step_tokenize(boardgamemechanic,custom_token = split_category) %>% 
+  step_tokenfilter(boardgamemechanic, max_tokens = 30) %>% 
+  step_tf(boardgamemechanic)
+
+
+game_prep <- prep(game_rec)
+bake(game_prep, new_data = NULL)
+```
+
+
+## XGBoost Model
+```{r}
+xgb_spec <- 
+  boost_tree(
+    trees = tune(),
+    mtry = tune(),
+    min_n = tune(),
+    learn_rate = 0.01
+  ) %>% 
+  set_engine("xgboost") %>% 
+  set_mode("regression")
+
+xgb_wf <- workflow(game_rec,
+                   xgb_spec)
+
+```
+
+### Tunning
+```{r}
+doParallel::registerDoParallel()
+
+set.seed(234)
+xgb_game_rs <- tune_race_anova(
+  xgb_wf,
+  game_folds,
+  grid = 20,
+  control = control_race(verbose_elim = TRUE)
+)
+xgb_game_rs
+```
+
+### Evaluating Model
+
+```{r}
+show_best(xgb_game_rs) %>% 
+  gt() %>% 
+  tab_header(
+    title = md("**Best Models**")
+  )
+```
+
+```{r}
+xgb_last <- xgb_wf %>% 
+  finalize_workflow(select_best(xgb_game_rs, "rmse")) %>% 
+  last_fit(game_split)
+
+xgb_last %>% 
+  collect_metrics() %>% 
+  gt() %>% 
+  tab_header(
+    title = md("**Estimation error on the Test data set**")
+  )
+```
+
+### Explaning the model
+```{r}
+xgb_fit <- extract_fit_parsnip(xgb_last)
+
+vip(xgb_fit, geom = "point", num_features = 12)
+
+```
+
+```{r}
+game_shap <- 
+  shap.prep(
+    xgb_model = extract_fit_engine(xgb_fit),
+    X_train = bake(game_prep,
+                   has_role("predictor"),
+                   new_data = NULL,
+                   composition = "matrix"
+                   )
+  )
+```
+
+```{r}
+shap.plot.summary(game_shap)
+```
+
+
+```{r}
+shap.plot.dependence(
+  game_shap,
+  x = "minage",
+  color_feature = "minplayers",
+  size0 = 1.2,
+  smooth = FALSE,
+  add_hist = TRUE
+)
+```
+
+```{r}
+shap.plot.dependence(
+  game_shap,
+  x = "minplayers",
+  color_feature = "minage",
+  size0 = 1.2,
+  smooth = FALSE,
+  add_hist = TRUE
+)
+```
