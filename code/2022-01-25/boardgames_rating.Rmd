@@ -291,5 +291,6 @@ shap.plot.dependence(
   size0 = 1.2,
   smooth = FALSE,
   add_hist = TRUE
+  
 )
 ```
