@@ -1,0 +1,175 @@
+---
+title: "Tuskegee Airmen"
+author: "Renato Albolea"
+date: "2/15/2022"
+output: html_document
+editor_options: 
+  chunk_output_type: console
+---
+
+```{r setup, include=FALSE}
+knitr::opts_chunk$set(echo = TRUE)
+library(tidyverse)
+library(magrittr)
+library(janitor)
+library(gt)
+library(infer)
+update_geom_defaults("rect", list(fill = "chocolate2", alpha = 0.8))
+
+theme_set(theme_minimal())
+```
+
+Exploring the relationship between aircraft type and rank at graduation for [the Tuskegee airmen](https://github.com/rfordatascience/tidytuesday/blob/master/data/2022/2022-02-08/readme.md)
+
+##Exploring Data
+
+```{r loading data} 
+airmen <- readr::read_csv('https://raw.githubusercontent.com/rfordatascience/tidytuesday/master/data/2022/2022-02-08/airmen.csv')
+
+airmen %>% glimpse()
+
+airmen %>% count(rank_at_graduation)
+airmen %>% count(class)
+airmen %>% count(graduated_from)
+airmen %>% count(pilot_type)
+airmen %>% count(reported_lost)
+```
+
+```{r data cleaning}
+
+airmen %<>%
+  mutate(rank_at_graduation = ifelse(rank_at_graduation == "N/A" | 
+                                       rank_at_graduation == "Unk", 
+                                     NA, 
+                                     rank_at_graduation),
+         rank_at_graduation= ifelse(rank_at_graduation == "Capt", "Captain", rank_at_graduation),
+         pilot_type = str_replace_all(pilot_type, "Liason pilot", "Liaison pilot")
+         ) 
+
+```
+
+
+```{r}
+airmen %>%
+    ggplot(aes(pilot_type, fill = rank_at_graduation)) +
+    geom_bar(stat = "count") + 
+  coord_flip()
+```
+
+```{r}
+airmen %>% 
+  tabyl(pilot_type, rank_at_graduation) %>% 
+  adorn_totals(where ="col") %>% 
+  adorn_percentages(denominator = "row") %>% 
+  adorn_pct_formatting() %>% 
+  adorn_ns() %>% 
+  gt() %>% 
+  tab_header(title = md("**Pilot Type by graduation ranking**"))
+```
+
+```{r}
+airmen %>% 
+  tabyl(rank_at_graduation, pilot_type) %>% 
+  adorn_totals(where ="col") %>% 
+  adorn_percentages(denominator = "row") %>% 
+  adorn_pct_formatting() %>% 
+  adorn_ns() %>% 
+  gt() %>% 
+  tab_header(title = md("**Graduation ranking by Pilot Type**"))
+```
+
+
+## Using **infer package**
+```{r}
+aircraft <- airmen %>% 
+  count(pilot_type, sort = TRUE) %>% 
+  head(2) %>% 
+  pull(pilot_type)
+
+ranks <- airmen %>% 
+  count(rank_at_graduation, sort = TRUE) %>% 
+  head(2)  %>% 
+  pull(rank_at_graduation)
+
+pilot_vs_rank <- airmen %>%
+  filter(pilot_type %in% aircraft,
+         rank_at_graduation %in% ranks) %>% 
+  specify(pilot_type ~ rank_at_graduation, success = aircraft[1] )
+
+
+set.seed(123)
+bootstrapped <- pilot_vs_rank %>% 
+  generate(reps = 1000,
+           type = "bootstrap")
+
+set.seed(234)
+permuted <- pilot_vs_rank %>% 
+  hypothesise(null = "independence") %>% 
+  generate(reps = 1000,
+           type = "permute")
+```
+
+
+
+## Qui-squared 
+```{r}
+observed <- pilot_vs_rank %>% 
+  calculate(stat = "chisq", order = ranks)
+
+observed
+```
+
+```{r}
+bootstrap_chisq <- bootstrapped %>% 
+  calculate(stat = "chisq", order = ranks)
+
+get_ci(bootstrap_chisq)
+```
+
+
+```{r}
+visualise(bootstrap_chisq)+
+  shade_ci(get_ci(bootstrap_chisq),
+           fill = "chocolate1",
+           color = "chocolate3",
+           lty = 2,
+           alpha = 0.2
+           )+
+  shade_p_value(obs_stat = observed, direction = NULL, color = "gray40", lty = 2)
+```
+
+```{r}
+permuted %>%
+  calculate(stat = "chisq", order = ranks) %>%
+  visualize() +
+  shade_p_value(obs_stat = observed, direction = NULL, color = "gray40", lty = 2)
+```
+
+
+
+## Odds ratio
+```{r}
+odds_desc <- paste(
+  "Flight officers were more likely to pilot twin engine aircraft",
+  "2nd Lts were more likely to pilot single engine aircraft",
+  sep = "\n"
+)
+
+bootstrapped %>% 
+  calculate(stat = "odds ratio",
+            order = ranks) %>% 
+  visualise()+
+  labs(
+    title = "Bootstrap distribution of Tuskegee airmen's rank by aircraft type",
+    subtitle = odds_desc,
+    x = "Odds ratio of twin vs. single engine (for flight officers compared to 2nd Lt)"
+  )
+```
+
+
+
+
+
+
+
+
